@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	kutil "kmodules.xyz/client-go"
 	dynamic_util "kmodules.xyz/client-go/dynamic"
+	meta_util "kmodules.xyz/client-go/meta"
 )
 
 func (c *Controller) create(redis *api.Redis) error {
@@ -77,6 +78,25 @@ func (c *Controller) create(redis *api.Redis) error {
 	vt1, err := c.ensureService(redis)
 	if err != nil {
 		return err
+	}
+
+	// wait for  Certificates secrets
+	if redis.Spec.TLS != nil {
+		ok, err := dynamic_util.ResourcesExists(
+			c.DynamicClient,
+			core.SchemeGroupVersion.WithResource("secrets"),
+			redis.Namespace,
+			meta_util.NameWithSuffix(redis.Name, api.RedisServerSecretSuffix),
+			meta_util.NameWithSuffix(redis.Name, api.RedisExternalClientSecretSuffix),
+			meta_util.NameWithSuffix(redis.Name, api.RedisExporterClientSecretSuffix),
+		)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			log.Infoln("wait for all certificate secrets for Redis %s/%s", redis.Namespace, redis.Name)
+			return nil
+		}
 	}
 
 	// ensure database StatefulSet

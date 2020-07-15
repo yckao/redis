@@ -17,6 +17,7 @@ package controller
 
 import (
 	"context"
+	cm "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
 
 	cs "kubedb.dev/apimachinery/client/clientset/versioned"
 	amc "kubedb.dev/apimachinery/pkg/controller"
@@ -48,6 +49,7 @@ type OperatorConfig struct {
 	DynamicClient    dynamic.Interface
 	AppCatalogClient appcat_cs.Interface
 	PromClient       pcm.MonitoringV1Interface
+	CertManagerClient cm.Interface
 }
 
 func NewOperatorConfig(clientConfig *rest.Config) *OperatorConfig {
@@ -78,6 +80,7 @@ func (c *OperatorConfig) New() (*Controller, error) {
 		c.PromClient,
 		c.Config,
 		topology,
+		c.CertManagerClient,
 		recorder,
 	)
 

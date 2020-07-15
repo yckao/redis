@@ -7,6 +7,7 @@ require (
 	github.com/codeskyblue/go-sh v0.0.0-20190412065543-76bd3d59ff27
 	github.com/coreos/prometheus-operator v0.39.0
 	github.com/go-redis/redis v6.15.8+incompatible
+	github.com/jetstack/cert-manager v0.15.0
 	github.com/onsi/ginkgo v1.11.0
 	github.com/onsi/gomega v1.8.1
 	github.com/pkg/errors v0.8.1
@@ -19,12 +20,12 @@ require (
 	k8s.io/apiserver v0.18.3
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/kube-aggregator v0.18.3
-	kmodules.xyz/client-go v0.0.0-20200525195850-2fd180961371
+	kmodules.xyz/client-go v0.0.0-20200714060506-0b57b4060595
 	kmodules.xyz/custom-resources v0.0.0-20200604135349-9e9f5c4fdba9
 	kmodules.xyz/monitoring-agent-api v0.0.0-20200525002655-2aa50cb10ce9
 	kmodules.xyz/offshoot-api v0.0.0-20200521035628-e135bf07b226
 	kmodules.xyz/webhook-runtime v0.0.0-20200522123600-ca70a7e28ed0
-	kubedb.dev/apimachinery v0.14.0-alpha.7
+	kubedb.dev/apimachinery v0.14.0-beta.1.0.20200714164025-34f19ea654d3
 )
 
 replace bitbucket.org/ww/goautoneg => gomodules.xyz/goautoneg v0.0.0-20120707110453-a547fc61f48d

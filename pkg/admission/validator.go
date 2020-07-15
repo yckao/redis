@@ -18,6 +18,7 @@ package admission
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -202,6 +203,12 @@ func ValidateRedis(client kubernetes.Interface, extClient cs.Interface, redis *a
 		return fmt.Errorf(`'spec.terminationPolicy: Halt' can not be used for 'Ephemeral' storage`)
 	}
 
+	if redis.Spec.TLS != nil {
+		if _, err := isTLSSupportAvailable(redis); err != nil {
+			return err
+		}
+	}
+
 	if err := amv.ValidateEnvVar(redis.Spec.PodTemplate.Spec.Env, forbiddenEnvVars, api.ResourceKindRedis); err != nil {
 		return err
 	}
@@ -258,4 +265,26 @@ func preconditionFailedError() error {
 	kind
 	name
 	namespace`, strList}, "\n\t"))
+}
+func isTLSSupportAvailable(redis *api.Redis) (bool, error) {
+	version := string(redis.Spec.Version)
+	splitOff(&version, "-")
+	// version string is now in `major.minor.patch` form
+	dotParts := strings.SplitN(version, ".", 3)
+	if len(dotParts) == 0 {
+		return false, fmt.Errorf("version %q has no major part", version)
+	}
+	major, err := strconv.ParseInt(dotParts[0], 10, 64)
+	if err != nil {
+		return false, fmt.Errorf("unable to parse major part in version %q: %v", version, err)
+	}
+	if major != 6 {
+		return false, fmt.Errorf("ssl support is available only for v6 or higher versions")
+	}
+	return true, nil
+}
+func splitOff(input *string, delim string) {
+	if parts := strings.SplitN(*input, delim, 2); len(parts) == 2 {
+		*input = parts[0]
+	}
 }

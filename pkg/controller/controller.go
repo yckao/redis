@@ -17,6 +17,7 @@ package controller
 
 import (
 	"context"
+	cm "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
 
 	catalog "kubedb.dev/apimachinery/apis/catalog/v1alpha1"
 	api "kubedb.dev/apimachinery/apis/kubedb/v1alpha1"
@@ -73,6 +74,7 @@ func New(
 	promClient pcm.MonitoringV1Interface,
 	opt amc.Config,
 	topology *core_util.Topology,
+	cmClientset cm.Interface,
 	recorder record.EventRecorder,
 ) *Controller {
 	return &Controller{
@@ -83,7 +85,8 @@ func New(
 			CRDClient:        crdClient,
 			DynamicClient:    dynamicClient,
 			AppCatalogClient: appCatalogClient,
-			ClusterTopology:  topology,
+			CertManagerClient: cmClientset,
+			ClusterTopology: topology,
 		},
 		Config:     opt,
 		promClient: promClient,
@@ -108,7 +111,7 @@ func (c *Controller) EnsureCustomResourceDefinitions() error {
 // InitInformer initializes Redis, DormantDB amd Snapshot watcher
 func (c *Controller) Init() error {
 	c.initWatcher()
-
+	c.initSecretWatcher()
 	return nil
 }
 

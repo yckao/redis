@@ -365,11 +365,11 @@ install:
 		--set catalog.postgres=false \
 		--set catalog.proxysql=false \
 		--set catalog.redis=true; \
-	helm install kubedb-enterprise charts/kubedb-enterprise --wait \
-		--namespace=$(KUBE_NAMESPACE) \
-		--set operator.tag=$(ENTERPRISE_TAG) \
-		--set imagePullPolicy=Always \
-		$(IMAGE_PULL_SECRETS)
+#	helm install kubedb-enterprise charts/kubedb-enterprise --wait \
+#		--namespace=$(KUBE_NAMESPACE) \
+#		--set operator.tag=$(ENTERPRISE_TAG) \
+#		--set imagePullPolicy=Always \
+#		$(IMAGE_PULL_SECRETS)
 
 .PHONY: uninstall
 uninstall:

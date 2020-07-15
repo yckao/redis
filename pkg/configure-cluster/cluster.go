@@ -49,11 +49,18 @@ func ConfigureRedisCluster(
 		},
 		redisVersion: ver,
 	}
+	var isTLS bool
+	if redis.Spec.TLS != nil {
+		isTLS = true
+	} else {
+		isTLS = false
+	}
 
-	if err := config.waitUntilRedisServersToBeReady(pods); err != nil {
+	if err := config.waitUntilRedisServersToBeReady(isTLS, pods); err != nil {
 		return err
 	}
-	if err := config.configureClusterState(pods); err != nil {
+
+	if err := config.configureClusterState(isTLS, pods); err != nil {
 		return err
 	}
 
@@ -65,7 +72,7 @@ func ConfigureRedisCluster(
 // the reply should be the string "PONG" if the node is ready. If any of nodes isn't ready within
 // the timeOut, this function returns an error.
 // ref: https://redis.io/commands/ping
-func (c Config) waitUntilRedisServersToBeReady(pods [][]*core.Pod) error {
+func (c Config) waitUntilRedisServersToBeReady(isTLS bool, pods [][]*core.Pod) error {
 	var err error
 
 	// i is for shards and j is for replicas. So (i, j) pair points to the j'th node (Pod) of i'th shard
@@ -74,10 +81,9 @@ func (c Config) waitUntilRedisServersToBeReady(pods [][]*core.Pod) error {
 			execPod := pods[i][j]
 			pingIP := execPod.Status.PodIP
 			if err = wait.PollImmediate(time.Second, time.Minute*5, func() (bool, error) {
-				if pong, _ := c.ping(execPod, pingIP); pong == "PONG" {
+				if pong, _ := c.ping(isTLS, execPod, pingIP); pong == "PONG" {
 					return true, nil
 				}
-
 				return false, nil
 			}); err != nil {
 				return errors.Wrapf(err, "%q is not ready yet", pingIP)
@@ -92,7 +98,7 @@ func (c Config) waitUntilRedisServersToBeReady(pods [][]*core.Pod) error {
 // If a node does not know another node then do a `CLUSTER MEET` from the first one.
 // Here sender node sends MEET packet to the receiver node.
 // ref: https://redis.io/commands/cluster-meet
-func (c Config) ensureAllNodesKnowEachOther(pods [][]*core.Pod) error {
+func (c Config) ensureAllNodesKnowEachOther(isTLS bool, pods [][]*core.Pod) error {
 	var (
 		err                                error
 		execPodSnd, execPodRcv             *core.Pod
@@ -126,7 +132,7 @@ func (c Config) ensureAllNodesKnowEachOther(pods [][]*core.Pod) error {
 
 			execPodSnd = pods[i][j]
 			senderIP = execPodSnd.Status.PodIP
-			if senderConf, err = c.getClusterNodes(execPodSnd, senderIP); err != nil {
+			if senderConf, err = c.getClusterNodes(isTLS, execPodSnd, senderIP); err != nil {
 				return err
 			}
 
@@ -143,7 +149,7 @@ func (c Config) ensureAllNodesKnowEachOther(pods [][]*core.Pod) error {
 
 						execPodRcv = pods[x][y]
 						receiverIP = execPodRcv.Status.PodIP
-						if receiverConf, err = c.getClusterNodes(execPodRcv, receiverIP); err != nil {
+						if receiverConf, err = c.getClusterNodes(isTLS, execPodRcv, receiverIP); err != nil {
 							return err
 						}
 
@@ -154,7 +160,7 @@ func (c Config) ensureAllNodesKnowEachOther(pods [][]*core.Pod) error {
 						// sender node, then send a MEET packet.
 						if nodeCntInReceiver > 1 &&
 							!strings.Contains(senderConf, receiverIP) {
-							if err = c.clusterMeet(execPodSnd, senderIP, receiverIP, strconv.Itoa(api.RedisNodePort)); err != nil {
+							if err = c.clusterMeet(isTLS, execPodSnd, senderIP, receiverIP, strconv.Itoa(api.RedisNodePort)); err != nil {
 								return err
 							}
 						}
@@ -170,7 +176,7 @@ func (c Config) ensureAllNodesKnowEachOther(pods [][]*core.Pod) error {
 
 // Before configuring the cluster, the operator ensures 1st Pod (node) of each StatefulSet as master.
 // ensureFirstPodAsMaster() ensures this.
-func (c Config) ensureFirstPodAsMaster(pods [][]*core.Pod) error {
+func (c Config) ensureFirstPodAsMaster(isTLS bool, pods [][]*core.Pod) error {
 	log.Infoln("Ensuring 1st pod as master in each statefulSet...")
 
 	var (
@@ -182,7 +188,7 @@ func (c Config) ensureFirstPodAsMaster(pods [][]*core.Pod) error {
 
 	execPod = pods[0][0]
 	contactingNodeIP = execPod.Status.PodIP
-	if nodesConf, err = c.getClusterNodes(execPod, contactingNodeIP); err != nil {
+	if nodesConf, err = c.getClusterNodes(isTLS, execPod, contactingNodeIP); err != nil {
 		return err
 	}
 
@@ -190,20 +196,20 @@ func (c Config) ensureFirstPodAsMaster(pods [][]*core.Pod) error {
 
 	// if the number of masters is greater than 1, it means there exists a cluster.
 	if existingMasterCnt > 1 {
-		if err = c.ensureAllNodesKnowEachOther(pods); err != nil {
+		if err = c.ensureAllNodesKnowEachOther(isTLS, pods); err != nil {
 			return err
 		}
 
 		for i := 0; i < c.Cluster.MasterCnt; i++ {
 			execPod = pods[i][0]
 			contactingNodeIP = execPod.Status.PodIP
-			if nodesConf, err = c.getClusterNodes(execPod, contactingNodeIP); err != nil {
+			if nodesConf, err = c.getClusterNodes(isTLS, execPod, contactingNodeIP); err != nil {
 				return err
 			}
 
 			if getNodeRole(getMyConf(nodesConf)) != nodeFlagMaster {
 				// role != "master" means this node is not serving as master
-				if err = c.clusterFailover(execPod, contactingNodeIP); err != nil {
+				if err = c.clusterFailover(isTLS, execPod, contactingNodeIP); err != nil {
 					return err
 				}
 				// TODO: Need to use a better alternative for successful completion of the above operation.
@@ -219,7 +225,7 @@ func (c Config) ensureFirstPodAsMaster(pods [][]*core.Pod) error {
 //     orderedNodes[i][0] is always master node and pods[i][0] represents this node
 //     for j>0, orderedNodes[i][j] are slaves of orderedNodes[i][0] and pods[i][j] represents them
 // We order the nodes so that we can process further tasks easily
-func (c Config) getOrderedNodes(pods [][]*core.Pod) ([][]RedisNode, error) {
+func (c Config) getOrderedNodes(isTLS bool, pods [][]*core.Pod) ([][]RedisNode, error) {
 	var (
 		err          error
 		nodesConf    string
@@ -227,14 +233,14 @@ func (c Config) getOrderedNodes(pods [][]*core.Pod) ([][]RedisNode, error) {
 		orderedNodes [][]RedisNode
 	)
 
-	if err = c.ensureFirstPodAsMaster(pods); err != nil {
+	if err = c.ensureFirstPodAsMaster(isTLS, pods); err != nil {
 		return nil, err
 	}
 
 Again:
 	for {
 		execPod := pods[0][0]
-		if nodesConf, err = c.getClusterNodes(execPod, execPod.Status.PodIP); err != nil {
+		if nodesConf, err = c.getClusterNodes(isTLS, execPod, execPod.Status.PodIP); err != nil {
 			return nil, err
 		}
 
@@ -248,6 +254,7 @@ Again:
 							for j := 1; j < len(pods[k]); j++ {
 								if pods[k][j].Status.PodIP == slave.IP && i != k {
 									if err = c.clusterReplicate(
+										isTLS,
 										pods[k][j], pods[k][j].Status.PodIP,
 										getNodeId(getNodeConfByIP(nodesConf, pods[k][0].Status.PodIP))); err != nil {
 										return nil, err
@@ -295,8 +302,8 @@ Again:
 	return orderedNodes, nil
 }
 
-func (c Config) resetNode(execPod *core.Pod, resetNodeIP string) error {
-	if err := c.clusterReset(execPod, resetNodeIP, string(resetTypeSoft)); err != nil {
+func (c Config) resetNode(isTLS bool, execPod *core.Pod, resetNodeIP string) error {
+	if err := c.clusterReset(isTLS, execPod, resetNodeIP, string(resetTypeSoft)); err != nil {
 		return err
 	}
 	// TODO: Need to use a better alternative for successful completion of the above operation.
@@ -308,7 +315,7 @@ func (c Config) resetNode(execPod *core.Pod, resetNodeIP string) error {
 // for each shard i
 // 	   if c.Cluster.Replicas is smaller than the number of slaves in i'th shard;
 //		   then delete and reset the extra slaves from back
-func (c Config) ensureExtraSlavesBeRemoved(pods [][]*core.Pod) error {
+func (c Config) ensureExtraSlavesBeRemoved(isTLS bool, pods [][]*core.Pod) error {
 	log.Infoln("Ensuring extra slaves be removed...")
 
 	var (
@@ -316,7 +323,7 @@ func (c Config) ensureExtraSlavesBeRemoved(pods [][]*core.Pod) error {
 		nodes [][]RedisNode
 	)
 
-	if nodes, err = c.getOrderedNodes(pods); err != nil {
+	if nodes, err = c.getOrderedNodes(isTLS, pods); err != nil {
 		return err
 	}
 
@@ -325,7 +332,7 @@ func (c Config) ensureExtraSlavesBeRemoved(pods [][]*core.Pod) error {
 			execPod := pods[0][0]
 			existingNodeAddr := nodeAddress(nodes[i][0].IP)
 			deletingNodeId := nodes[i][j].ID
-			if err = c.deleteNode(execPod, existingNodeAddr, deletingNodeId); err != nil {
+			if err = c.deleteNode(isTLS, execPod, existingNodeAddr, deletingNodeId); err != nil {
 				return err
 			}
 			// TODO: Need to use a better alternative for successful completion of the above operation.
@@ -338,7 +345,7 @@ func (c Config) ensureExtraSlavesBeRemoved(pods [][]*core.Pod) error {
 
 			// pods[i][j] represents nodes[i][j] (the node that has been just deleted). So nodes[i][j].IP is
 			// the IP of the deleted node that is being reset.
-			if err = c.resetNode(pods[i][j], nodes[i][j].IP); err != nil {
+			if err = c.resetNode(isTLS, pods[i][j], nodes[i][j].IP); err != nil {
 				return err
 			}
 		}
@@ -353,7 +360,7 @@ func (c Config) ensureExtraSlavesBeRemoved(pods [][]*core.Pod) error {
 // 	   for each i in range [c.Cluster.Master, # of existing master]
 //		   delete and reset the slaves of this master
 //		   delete and reset the master
-func (c Config) ensureExtraMastersBeRemoved(pods [][]*core.Pod) error {
+func (c Config) ensureExtraMastersBeRemoved(isTLS bool, pods [][]*core.Pod) error {
 	log.Infoln("Ensuring extra masters be removed...")
 
 	var (
@@ -364,7 +371,7 @@ func (c Config) ensureExtraMastersBeRemoved(pods [][]*core.Pod) error {
 		slotsRequired     int
 	)
 
-	if nodes, err = c.getOrderedNodes(pods); err != nil {
+	if nodes, err = c.getOrderedNodes(isTLS, pods); err != nil {
 		return err
 	}
 
@@ -390,7 +397,7 @@ func (c Config) ensureExtraMastersBeRemoved(pods [][]*core.Pod) error {
 
 			if i > 0 {
 				// this ensures that we have the latest cluster info
-				if nodes, err = c.getOrderedNodes(pods); err != nil {
+				if nodes, err = c.getOrderedNodes(isTLS, pods); err != nil {
 					return err
 				}
 			}
@@ -409,7 +416,7 @@ func (c Config) ensureExtraMastersBeRemoved(pods [][]*core.Pod) error {
 							slots = slotsRequired - to.SlotsCnt
 						}
 
-						if err = c.reshard(pods[0][0], nodes, k, i, slots); err != nil {
+						if err = c.reshard(isTLS, pods[0][0], nodes, k, i, slots); err != nil {
 							return err
 						}
 						// TODO: Need to use a better alternative for successful completion of the above operation.
@@ -430,7 +437,7 @@ func (c Config) ensureExtraMastersBeRemoved(pods [][]*core.Pod) error {
 				execPod := pods[0][0]
 				existingNodeAddr := nodeAddress(nodes[i][0].IP)
 				deletingNodeId := nodes[i][j].ID
-				if err = c.deleteNode(execPod, existingNodeAddr, deletingNodeId); err != nil {
+				if err = c.deleteNode(isTLS, execPod, existingNodeAddr, deletingNodeId); err != nil {
 					return err
 				}
 				// TODO: Need to use a better alternative for successful completion of the above operation.
@@ -443,7 +450,7 @@ func (c Config) ensureExtraMastersBeRemoved(pods [][]*core.Pod) error {
 
 				// pods[i][j] represents nodes[i][j] (the slave node that has been just deleted). So nodes[i][j].IP
 				// is the IP of the deleted slave node that is being reset.
-				if err = c.resetNode(pods[i][j], nodes[i][j].IP); err != nil {
+				if err = c.resetNode(isTLS, pods[i][j], nodes[i][j].IP); err != nil {
 					return err
 				}
 			}
@@ -451,7 +458,7 @@ func (c Config) ensureExtraMastersBeRemoved(pods [][]*core.Pod) error {
 			execPod := pods[0][0]
 			existingNodeAddr := nodeAddress(pods[0][0].Status.PodIP)
 			deletingNodeId := nodes[i][0].ID
-			if err = c.deleteNode(execPod, existingNodeAddr, deletingNodeId); err != nil {
+			if err = c.deleteNode(isTLS, execPod, existingNodeAddr, deletingNodeId); err != nil {
 				return err
 			}
 			// TODO: Need to use a better alternative for successful completion of the above operation.
@@ -461,7 +468,7 @@ func (c Config) ensureExtraMastersBeRemoved(pods [][]*core.Pod) error {
 
 			// pods[i][0] represents nodes[i][0] (the master node that has been just deleted). So nodes[i][0].IP
 			// is the IP of the deleted master node that is being reset.
-			if err = c.resetNode(pods[i][0], nodes[i][0].IP); err != nil {
+			if err = c.resetNode(isTLS, pods[i][0], nodes[i][0].IP); err != nil {
 				return err
 			}
 		}
@@ -474,7 +481,7 @@ func (c Config) ensureExtraMastersBeRemoved(pods [][]*core.Pod) error {
 // as specified in the Redis CRD, then this info is stored in `c.Cluster.Master`.
 // Then the operator creates new StatefulSet (one for each master / shard). And, the pods[] array contains
 // those new Pods. Basically pods[i][j] is j'th Pod of i'th shard (i'th StatefulSet)
-func (c Config) ensureNewMastersBeAdded(pods [][]*core.Pod) error {
+func (c Config) ensureNewMastersBeAdded(isTLS bool, pods [][]*core.Pod) error {
 	log.Infoln("Ensuring new masters be added...")
 
 	var (
@@ -483,7 +490,7 @@ func (c Config) ensureNewMastersBeAdded(pods [][]*core.Pod) error {
 		nodes             [][]RedisNode
 	)
 
-	if nodes, err = c.getOrderedNodes(pods); err != nil {
+	if nodes, err = c.getOrderedNodes(isTLS, pods); err != nil {
 		return err
 	}
 
@@ -500,7 +507,7 @@ func (c Config) ensureNewMastersBeAdded(pods [][]*core.Pod) error {
 		if existingMasterCnt < c.Cluster.MasterCnt {
 			for i := existingMasterCnt; i < c.Cluster.MasterCnt; i++ {
 				// ensure node must be empty before adding
-				if err = c.resetNode(pods[i][0], pods[i][0].Status.PodIP); err != nil {
+				if err = c.resetNode(isTLS, pods[i][0], pods[i][0].Status.PodIP); err != nil {
 					return err
 				}
 
@@ -508,6 +515,7 @@ func (c Config) ensureNewMastersBeAdded(pods [][]*core.Pod) error {
 				newAddr := nodeAddress(pods[i][0].Status.PodIP)
 				existingAddr := nodeAddress(execPod.Status.PodIP)
 				if err = c.addNode(
+					isTLS,
 					execPod,
 					newAddr, existingAddr, ""); err != nil {
 					return err
@@ -524,7 +532,7 @@ func (c Config) ensureNewMastersBeAdded(pods [][]*core.Pod) error {
 // There are 16384 slots in total. If the number of masters (shard number) is 5, then each master should have
 // 16384/5=3276(approximately) slots (the 5th master will keep remaining slots). If any master has less slots
 // rebalanceSlots() moves some slots to that master from the master those have extra slots.
-func (c Config) rebalanceSlots(pods [][]*core.Pod) error {
+func (c Config) rebalanceSlots(isTLS bool, pods [][]*core.Pod) error {
 	log.Infoln("Ensuring slots are rebalanced...")
 
 	var (
@@ -534,7 +542,7 @@ func (c Config) rebalanceSlots(pods [][]*core.Pod) error {
 		slotsPerMaster, slotsRequired int
 	)
 
-	if nodes, err = c.getOrderedNodes(pods); err != nil {
+	if nodes, err = c.getOrderedNodes(isTLS, pods); err != nil {
 		return err
 	}
 
@@ -565,7 +573,7 @@ func (c Config) rebalanceSlots(pods [][]*core.Pod) error {
 			}
 
 			if i > 0 {
-				if nodes, err = c.getOrderedNodes(pods); err != nil {
+				if nodes, err = c.getOrderedNodes(isTLS, pods); err != nil {
 					return err
 				}
 			}
@@ -584,7 +592,7 @@ func (c Config) rebalanceSlots(pods [][]*core.Pod) error {
 							slots = slotsRequired - to.SlotsCnt
 						}
 
-						if err = c.reshard(pods[0][0], nodes,
+						if err = c.reshard(isTLS, pods[0][0], nodes,
 							masterIndicesWithExtraSlots[k], masterIndicesWithLessSlots[i], slots); err != nil {
 							return err
 						}
@@ -607,7 +615,7 @@ func (c Config) rebalanceSlots(pods [][]*core.Pod) error {
 // nodes[i][0] is the master and the rests are slave nodes. If the c.Cluster.Replicas = 2, then each master
 // should have exactly 2 slaves. If in the cluster, i'th master has 1 slave, then nodes[i][2] needs to be added
 // to the i'th master. ensureNewSlavesBeAdded() ensures this.
-func (c Config) ensureNewSlavesBeAdded(pods [][]*core.Pod) error {
+func (c Config) ensureNewSlavesBeAdded(isTLS bool, pods [][]*core.Pod) error {
 	log.Infoln("Ensuring new slaves be added...")
 
 	var (
@@ -616,7 +624,7 @@ func (c Config) ensureNewSlavesBeAdded(pods [][]*core.Pod) error {
 		nodes             [][]RedisNode
 	)
 
-	if nodes, err = c.getOrderedNodes(pods); err != nil {
+	if nodes, err = c.getOrderedNodes(isTLS, pods); err != nil {
 		return err
 	}
 
@@ -633,7 +641,7 @@ func (c Config) ensureNewSlavesBeAdded(pods [][]*core.Pod) error {
 			if len(nodes[i])-1 < c.Cluster.Replicas {
 				for j := len(nodes[i]); j <= c.Cluster.Replicas; j++ {
 					// ensure node must be empty before adding
-					if err = c.resetNode(pods[i][j], pods[i][j].Status.PodIP); err != nil {
+					if err = c.resetNode(isTLS, pods[i][j], pods[i][j].Status.PodIP); err != nil {
 						return err
 					}
 
@@ -642,6 +650,7 @@ func (c Config) ensureNewSlavesBeAdded(pods [][]*core.Pod) error {
 					existingAddr := nodeAddress(nodes[i][0].IP)
 					masterID := nodes[i][0].ID
 					if err = c.addNode(
+						isTLS,
 						execPod,
 						newAddr, existingAddr, masterID); err != nil {
 						return err
@@ -656,7 +665,7 @@ func (c Config) ensureNewSlavesBeAdded(pods [][]*core.Pod) error {
 }
 
 // ensureCluster() ensures that a running cluster exists. If there is no cluster then create one.
-func (c Config) ensureCluster(pods [][]*core.Pod) error {
+func (c Config) ensureCluster(pods [][]*core.Pod, isTLS bool) error {
 	log.Infoln("Ensuring new cluster...")
 
 	var (
@@ -669,7 +678,7 @@ func (c Config) ensureCluster(pods [][]*core.Pod) error {
 	masterAddrs = make([]string, c.Cluster.MasterCnt)
 	masterNodeIds = make([]string, c.Cluster.MasterCnt)
 
-	nodes, err = c.getOrderedNodes(pods)
+	nodes, err = c.getOrderedNodes(isTLS, pods)
 	if err != nil {
 		return err
 	}
@@ -693,14 +702,14 @@ func (c Config) ensureCluster(pods [][]*core.Pod) error {
 	for i := 0; i < c.Cluster.MasterCnt; i++ {
 		masterPod := pods[i][0]
 		masterAddrs[i] = nodeAddress(masterPod.Status.PodIP)
-		if nodesConf, err = c.getClusterNodes(execPod, masterPod.Status.PodIP); err != nil {
+		if nodesConf, err = c.getClusterNodes(isTLS, execPod, masterPod.Status.PodIP); err != nil {
 			return err
 		}
 		masterNodeIds[i] = getNodeId(getMyConf(nodesConf))
 	}
 
 	// create the cluster with the masters specified
-	if err = c.createCluster(execPod, masterAddrs...); err != nil {
+	if err = c.createCluster(isTLS, execPod, masterAddrs...); err != nil {
 		return err
 	}
 	// TODO: Need to use a better alternative for successful completion of the above operation.
@@ -713,6 +722,7 @@ func (c Config) ensureCluster(pods [][]*core.Pod) error {
 			newAddr := nodeAddress(pods[i][j].Status.PodIP)
 			existingAddr := masterAddrs[i]
 			if err = c.addNode(
+				isTLS,
 				execPod,
 				newAddr, existingAddr, masterNodeIds[i]); err != nil {
 				return err
@@ -727,33 +737,33 @@ func (c Config) ensureCluster(pods [][]*core.Pod) error {
 
 // configureClusterState() creates a Redis cluster if none exists. If there exists a cluster,
 // then configure it if needs.
-func (c Config) configureClusterState(pods [][]*core.Pod) error {
+func (c Config) configureClusterState(isTLS bool, pods [][]*core.Pod) error {
 	var err error
 
-	if err = c.ensureCluster(pods); err != nil {
+	if err = c.ensureCluster(pods, isTLS); err != nil {
 		return err
 	}
 
-	if err = c.ensureExtraSlavesBeRemoved(pods); err != nil {
+	if err = c.ensureExtraSlavesBeRemoved(isTLS, pods); err != nil {
 		return err
 	}
 
-	if err = c.ensureExtraMastersBeRemoved(pods); err != nil {
+	if err = c.ensureExtraMastersBeRemoved(isTLS, pods); err != nil {
 		return err
 	}
 
-	if err = c.ensureNewMastersBeAdded(pods); err != nil {
+	if err = c.ensureNewMastersBeAdded(isTLS, pods); err != nil {
 		return err
 	}
-	if err = c.rebalanceSlots(pods); err != nil {
-		return err
-	}
-
-	if err = c.ensureNewSlavesBeAdded(pods); err != nil {
+	if err = c.rebalanceSlots(isTLS, pods); err != nil {
 		return err
 	}
 
-	if err = c.ensureFirstPodAsMaster(pods); err != nil {
+	if err = c.ensureNewSlavesBeAdded(isTLS, pods); err != nil {
+		return err
+	}
+
+	if err = c.ensureFirstPodAsMaster(isTLS, pods); err != nil {
 		return err
 	}
 
