@@ -1,5 +1,5 @@
 /*
-Copyright The KubeDB Authors.
+Copyright AppsCode Inc. and Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -56,11 +56,11 @@ const (
 	MongoDBShardPort                  = 27017
 	MongoDBConfigdbPort               = 27017
 	MongoDBMongosPort                 = 27017
-	MongoDBKeyFileSecretSuffix        = "-key"
-	MongoDBExternalClientSecretSuffix = "-client-cert"
-	MongoDBExporterClientSecretSuffix = "-exporter-cert"
-	MongoDBServerSecretSuffix         = "-server-cert"
-	MongoDBPEMSecretSuffix            = "-pem"
+	MongoDBKeyFileSecretSuffix        = "key"
+	MongoDBExternalClientSecretSuffix = "client-cert"
+	MongoDBExporterClientSecretSuffix = "exporter-cert"
+	MongoDBServerSecretSuffix         = "server-cert"
+	MongoDBPEMSecretSuffix            = "pem"
 	MongoDBClientCertOrganization     = DatabaseNamePrefix + ":client"
 	MongoDBCertificateCN              = "root"
 
@@ -104,9 +104,17 @@ const (
 	RedisNodePort   = 6379
 	RedisGossipPort = 16379
 
-	PgBouncerServingClientSuffix      = "-serving-client-cert"
-	PgBouncerExporterClientCertSuffix = "-exporter-cert"
-	PgBouncerServingServerSuffix      = "-serving-server-cert"
+	RedisKeyFileSecretSuffix        = "key"
+	RedisExternalClientSecretSuffix = "client-cert"
+	RedisExporterClientSecretSuffix = "exporter-cert"
+	RedisServerSecretSuffix         = "server-cert"
+	RedisPEMSecretSuffix            = "pem"
+	RedisClientCertOrganization     = DatabaseNamePrefix + ":client"
+	RedisCertificateCN              = "root"
+
+	PgBouncerServingClientSuffix      = "serving-client-cert"
+	PgBouncerExporterClientCertSuffix = "exporter-cert"
+	PgBouncerServingServerSuffix      = "serving-server-cert"
 	PgBouncerUpstreamServerCA         = "upstream-server-ca.crt"
 
 	MySQLClientCertSuffix         = "client-cert"

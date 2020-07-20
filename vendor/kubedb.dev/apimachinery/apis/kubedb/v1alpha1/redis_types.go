@@ -1,5 +1,5 @@
 /*
-Copyright The KubeDB Authors.
+Copyright AppsCode Inc. and Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -98,6 +98,10 @@ type RedisSpec struct {
 	// employed to update Pods in the StatefulSet when a revision is made to
 	// Template.
 	UpdateStrategy apps.StatefulSetUpdateStrategy `json:"updateStrategy,omitempty" protobuf:"bytes,11,opt,name=updateStrategy"`
+
+	// TLS contains tls configurations for client and server.
+	// +optional
+	TLS *TLSConfig `json:"tls,omitempty" protobuf:"bytes,15,opt,name=tls"`
 
 	// Indicates that the database is paused and controller will not sync any changes made to this spec.
 	// +optional

@@ -1,5 +1,5 @@
 /*
-Copyright The KubeDB Authors.
+Copyright AppsCode Inc. and Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -35,7 +35,9 @@ import (
 	ofst "kmodules.xyz/offshoot-api/api/v1"
 )
 
-const RedisShardAffinityTemplateVar = "SHARD_INDEX"
+const (
+	RedisShardAffinityTemplateVar = "SHARD_INDEX"
+)
 
 func (_ Redis) CustomResourceDefinition() *apiextensions.CustomResourceDefinition {
 	return crds.MustCustomResourceDefinition(SchemeGroupVersion.WithResource(ResourcePluralRedis))

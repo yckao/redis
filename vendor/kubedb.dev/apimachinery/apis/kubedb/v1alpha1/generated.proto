@@ -1,5 +1,5 @@
 /*
-Copyright The KubeDB Authors.
+Copyright AppsCode Inc. and Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -737,6 +737,10 @@ message MongoDBSpec {
   // TerminationPolicy controls the delete operation for database
   // +optional
   optional string terminationPolicy = 20;
+
+  // StorageEngine can be wiredTiger (default) or inMemory
+  // See available StorageEngine: https://docs.mongodb.com/manual/core/storage-engines/
+  optional string storageEngine = 21;
 }
 
 message MongoDBStatus {
@@ -1338,6 +1342,10 @@ message RedisSpec {
   // employed to update Pods in the StatefulSet when a revision is made to
   // Template.
   optional k8s.io.api.apps.v1.StatefulSetUpdateStrategy updateStrategy = 11;
+
+  // TLS contains tls configurations for client and server.
+  // +optional
+  optional TLSConfig tls = 15;
 
   // Indicates that the database is paused and controller will not sync any changes made to this spec.
   // +optional

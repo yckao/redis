@@ -1,5 +1,5 @@
 /*
-Copyright The KubeDB Authors.
+Copyright AppsCode Inc. and Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -318,6 +318,9 @@ func (m *MongoDB) SetDefaults(mgVersion *v1alpha1.MongoDBVersion, topology *core
 
 	if m.Spec.StorageType == "" {
 		m.Spec.StorageType = StorageTypeDurable
+	}
+	if m.Spec.StorageEngine == "" {
+		m.Spec.StorageEngine = StorageEngineWiredTiger
 	}
 	if m.Spec.UpdateStrategy.Type == "" {
 		m.Spec.UpdateStrategy.Type = apps.RollingUpdateStatefulSetStrategyType
