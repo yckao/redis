@@ -28,7 +28,9 @@ import (
 	core "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	kutil "kmodules.xyz/client-go"
+	core_util "kmodules.xyz/client-go/core/v1"
 	dynamic_util "kmodules.xyz/client-go/dynamic"
 	meta_util "kmodules.xyz/client-go/meta"
 )
@@ -220,6 +222,25 @@ func (c *Controller) setOwnerReferenceToOffshoots(redis *api.Redis) error {
 	owner := metav1.NewControllerRef(redis, api.SchemeGroupVersion.WithKind(api.ResourceKindRedis))
 	selector := labels.SelectorFromSet(redis.OffshootSelectors())
 
+	// If TerminationPolicy is "wipeOut", delete snapshots and secrets,
+	// else, keep it intact.
+	if redis.Spec.TerminationPolicy == api.TerminationPolicyWipeOut {
+		if err := c.wipeOutDatabase(redis.ObjectMeta, c.GetRedisSecrets(redis), owner); err != nil {
+			return errors.Wrap(err, "error in wiping out database.")
+		}
+	} else {
+		// Make sure secret's ownerreference is removed.
+		if err := dynamic_util.RemoveOwnerReferenceForItems(
+			context.TODO(),
+			c.DynamicClient,
+			core.SchemeGroupVersion.WithResource("secrets"),
+			redis.Namespace,
+			c.GetRedisSecrets(redis),
+			redis); err != nil {
+			return err
+		}
+	}
+
 	// delete PVC for both "wipeOut" and "delete" TerminationPolicy.
 	return dynamic_util.EnsureOwnerReferenceForSelector(
 		context.TODO(),
@@ -233,12 +254,63 @@ func (c *Controller) setOwnerReferenceToOffshoots(redis *api.Redis) error {
 func (c *Controller) removeOwnerReferenceFromOffshoots(redis *api.Redis) error {
 	// First, Get LabelSelector for Other Components
 	labelSelector := labels.SelectorFromSet(redis.OffshootSelectors())
-
-	return dynamic_util.RemoveOwnerReferenceForSelector(
+	if err := dynamic_util.RemoveOwnerReferenceForItems(
+		context.TODO(),
+		c.DynamicClient,
+		core.SchemeGroupVersion.WithResource("secrets"),
+		redis.Namespace,
+		c.GetRedisSecrets(redis),
+		redis); err != nil {
+		return err
+	}
+	if err := dynamic_util.RemoveOwnerReferenceForSelector(
 		context.TODO(),
 		c.DynamicClient,
 		core.SchemeGroupVersion.WithResource("persistentvolumeclaims"),
 		redis.Namespace,
 		labelSelector,
-		redis)
+		redis); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Controller) GetDatabase(meta metav1.ObjectMeta) (runtime.Object, error) {
+	redis, err := c.rdLister.Redises(meta.Namespace).Get(meta.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	return redis, nil
+}
+
+func (c *Controller) SetDatabaseStatus(meta metav1.ObjectMeta, phase api.DatabasePhase, reason string) error {
+	redis, err := c.rdLister.Redises(meta.Namespace).Get(meta.Name)
+	if err != nil {
+		return err
+	}
+	_, err = util.UpdateRedisStatus(context.TODO(), c.ExtClient.KubedbV1alpha1(), redis.ObjectMeta, func(in *api.RedisStatus) *api.RedisStatus {
+		in.Phase = phase
+		in.Reason = reason
+		return in
+	},
+		metav1.UpdateOptions{},
+	)
+	return err
+}
+
+func (c *Controller) UpsertDatabaseAnnotation(meta metav1.ObjectMeta, annotation map[string]string) error {
+	redis, err := c.rdLister.Redises(meta.Namespace).Get(meta.Name)
+	if err != nil {
+		return err
+	}
+
+	_, _, err = util.PatchRedis(context.TODO(),
+		c.ExtClient.KubedbV1alpha1(), redis, func(in *api.Redis) *api.Redis {
+			in.Annotations = core_util.UpsertMap(in.Annotations, annotation)
+			return in
+		},
+		metav1.PatchOptions{},
+	)
+	return err
 }

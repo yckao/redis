@@ -9,6 +9,7 @@ import (
 	core "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
+	meta_util "kmodules.xyz/client-go/meta"
 )
 
 func (c *Controller) secretExists(meta metav1.ObjectMeta) bool {
@@ -43,4 +44,17 @@ func (c *Controller) RedisForSecret(s *core.Secret) cache.ExplicitKey {
 		return ""
 	}
 	return cache.ExplicitKey(s.Namespace + "/" + certCtrl.Name)
+}
+
+func (c *Controller) GetRedisSecrets(redis *api.Redis) []string {
+
+	if redis.Spec.TLS != nil {
+		return []string{
+			meta_util.NameWithSuffix(redis.GetName(), api.RedisServerSecretSuffix),
+			meta_util.NameWithSuffix(redis.GetName(), api.RedisExternalClientSecretSuffix),
+			meta_util.NameWithSuffix(redis.GetName(), api.RedisExporterClientSecretSuffix),
+		}
+	}
+
+	return nil
 }

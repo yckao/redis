@@ -17,7 +17,6 @@ package controller
 
 import (
 	"context"
-	cm "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
 
 	catalog "kubedb.dev/apimachinery/apis/catalog/v1alpha1"
 	api "kubedb.dev/apimachinery/apis/kubedb/v1alpha1"
@@ -29,6 +28,7 @@ import (
 
 	"github.com/appscode/go/log"
 	pcm "github.com/coreos/prometheus-operator/pkg/client/versioned/typed/monitoring/v1"
+	cm "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
 	core "k8s.io/api/core/v1"
 	crd_cs "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -79,14 +79,14 @@ func New(
 ) *Controller {
 	return &Controller{
 		Controller: &amc.Controller{
-			ClientConfig:     clientConfig,
-			Client:           client,
-			ExtClient:        extClient,
-			CRDClient:        crdClient,
-			DynamicClient:    dynamicClient,
-			AppCatalogClient: appCatalogClient,
+			ClientConfig:      clientConfig,
+			Client:            client,
+			ExtClient:         extClient,
+			CRDClient:         crdClient,
+			DynamicClient:     dynamicClient,
+			AppCatalogClient:  appCatalogClient,
 			CertManagerClient: cmClientset,
-			ClusterTopology: topology,
+			ClusterTopology:   topology,
 		},
 		Config:     opt,
 		promClient: promClient,
@@ -97,7 +97,7 @@ func New(
 	}
 }
 
-// EnsureCustomResourceDefinitions ensures CRD for MySQl, DormantDatabase
+// EnsureCustomResourceDefinitions ensures CRD for Redis, DormantDatabase
 func (c *Controller) EnsureCustomResourceDefinitions() error {
 	log.Infoln("Ensuring CustomResourceDefinition...")
 	crds := []*apiextensions.CustomResourceDefinition{

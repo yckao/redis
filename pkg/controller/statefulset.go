@@ -307,19 +307,28 @@ func (c *Controller) createStatefulSet(redis *api.Redis, statefulSetName string,
 			Lifecycle:      redis.Spec.PodTemplate.Spec.Lifecycle,
 		}
 
-		if redis.Spec.Mode == api.RedisModeStandalone && redis.Spec.TLS != nil {
+		if redis.Spec.Mode == api.RedisModeStandalone {
 
 			args := container.Args
-			// tls arguments for redis standalone
-			tlsArgs := []string{
-				"--tls-port 6379",
-				"--port 0",
-				"--tls-cert-file /certs/server.crt",
-				"--tls-key-file /certs/server.key",
-				"--tls-ca-cert-file /certs/ca.crt",
+			// for backup redis data
+			customArgs := []string{
+				"--appendonly yes",
 			}
-			args = append(args, tlsArgs...)
+			args = append(args, customArgs...)
+
+			if redis.Spec.TLS != nil {
+				// tls arguments for redis standalone
+				tlsArgs := []string{
+					"--tls-port 6379",
+					"--port 0",
+					"--tls-cert-file /certs/server.crt",
+					"--tls-key-file /certs/server.key",
+					"--tls-ca-cert-file /certs/ca.crt",
+				}
+				args = append(args, tlsArgs...)
+			}
 			container.Args = args
+
 		} else if redis.Spec.Mode == api.RedisModeCluster && redis.Spec.TLS != nil {
 			args := container.Args
 			// tls arguments for redis cluster
@@ -572,8 +581,6 @@ func upsertTLSVolume(sts *apps.StatefulSet, redis *api.Redis) *apps.StatefulSet 
 
 	return sts
 }
-
-
 
 func (c *Controller) checkStatefulSetPodStatus(statefulSet *apps.StatefulSet) error {
 	return core_util.WaitUntilPodRunningBySelector(
