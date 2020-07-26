@@ -16,7 +16,9 @@ limitations under the License.
 package e2e_test
 
 import (
+	"crypto/tls"
 	"fmt"
+	kerr "k8s.io/apimachinery/pkg/api/errors"
 	"strconv"
 	"time"
 
@@ -27,7 +29,6 @@ import (
 	rd "github.com/go-redis/redis"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	kerr "k8s.io/apimachinery/pkg/api/errors"
 	"kmodules.xyz/client-go/tools/portforward"
 )
 
@@ -71,7 +72,7 @@ var deleteTestResource = func() {
 	By("Wait for redis to be deleted")
 	cl.f.EventuallyRedis(cl.redis.ObjectMeta).Should(BeFalse())
 
-	By("Wait for redis resources to be wipedOut")
+	By("Wait for redis resources to be wipedOut cluster")
 	cl.f.EventuallyWipedOut(cl.redis.ObjectMeta).Should(Succeed())
 }
 
@@ -132,8 +133,8 @@ var _ = Describe("Redis Cluster", func() {
 		Expect(cl.f.WaitUntilRedisClusterConfigured(cl.redis, ports[0][0])).NotTo(HaveOccurred())
 
 		By("Get configured cluster info")
-		//cluster = framework.Sync(ports, cl.redis)
-		nodes, rdClients = framework.Sync(ports, cl.redis)
+		nodes, rdClients = cl.f.Sync(ports, cl.redis)
+		//nodes, rdClients = framework.Sync(ports, cl.redis)
 		cluster = &framework.ClusterScenario{
 			Nodes:   nodes,
 			Clients: rdClients,
@@ -154,12 +155,34 @@ var _ = Describe("Redis Cluster", func() {
 		opt = &rd.ClusterOptions{
 			ClusterSlots:  clusterSlots,
 			RouteRandomly: true,
+			ReadTimeout:   time.Minute,
+			WriteTimeout:  2 * time.Minute,
 		}
+
+		if framework.WithTLSConfig == true {
+			certPool, clientCert, err := cl.f.GetTLSCerts(cl.redis.ObjectMeta)
+			Expect(err).NotTo(HaveOccurred())
+
+			opt.TLSConfig = &tls.Config{
+				InsecureSkipVerify: true,
+				RootCAs:            certPool,
+				Certificates:       clientCert,
+				MinVersion: tls.VersionTLS12,
+			}
+		}
+
 		client = cluster.ClusterClient(opt)
 		Expect(client.ReloadState()).NotTo(HaveOccurred())
 
+		By("Initializing cluster info")
+		res, err := client.ClusterInfo().Result()
+		fmt.Println(res)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res).To(ContainSubstring(fmt.Sprintf("cluster_known_nodes:%d",
+			(*cl.redis.Spec.Cluster.Master)*((*cl.redis.Spec.Cluster.Replicas)+1))))
+
 		By("Initializing cluster client")
-		err := client.ForEachMaster(func(master *rd.Client) error {
+		err = client.ForEachMaster(func(master *rd.Client) error {
 			return master.FlushDB().Err()
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -221,10 +244,15 @@ var _ = Describe("Redis Cluster", func() {
 		})
 
 		AfterEach(func() {
-			err = client.ForEachMaster(func(master *rd.Client) error {
-				return master.FlushDB().Err()
-			})
-			Expect(err).NotTo(HaveOccurred())
+
+			if framework.Cluster == true {
+				err = client.ForEachMaster(func(master *rd.Client) error {
+					return master.FlushDB().Err()
+				})
+				Expect(err).NotTo(HaveOccurred())
+				err = cl.f.CleanupTestResources()
+				Expect(err).NotTo(HaveOccurred())
+			}
 
 			Expect(client.Close()).NotTo(HaveOccurred())
 
@@ -242,7 +270,7 @@ var _ = Describe("Redis Cluster", func() {
 				(*cl.redis.Spec.Cluster.Master)*((*cl.redis.Spec.Cluster.Replicas)+1))))
 		})
 
-		It("calls fn for every master node", func() {
+		FIt("calls fn for every master node", func() {
 			if skipMessage != "" {
 				Skip(skipMessage)
 			}
@@ -422,6 +450,8 @@ var _ = Describe("Redis Cluster", func() {
 		AfterEach(func() {
 			failover = false
 
+			err = cl.f.CleanupTestResources()
+			Expect(err).NotTo(HaveOccurred())
 			Expect(client.Close()).NotTo(HaveOccurred())
 
 			closeExistingTunnels()

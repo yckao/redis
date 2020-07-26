@@ -18,6 +18,7 @@ package framework
 import (
 	"context"
 	"fmt"
+	cm_api "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
 	"strconv"
 	"time"
 
@@ -75,7 +76,37 @@ func (fi *Invocation) RedisCluster() *api.Redis {
 		Master:   types.Int32P(3),
 		Replicas: types.Int32P(1),
 	}
+	if WithTLSConfig == true {
+		redis = fi.RedisWithTLS(redis)
+	}
 
+	return redis
+}
+
+func (f *Invocation) RedisWithTLS(redis *api.Redis) *api.Redis {
+
+	issuer, err := f.InsureIssuer(redis.ObjectMeta, api.ResourceKindRedis)
+	Expect(err).NotTo(HaveOccurred())
+	if redis.Spec.TLS == nil {
+		redis.Spec.TLS = &api.TLSConfig{
+			IssuerRef: &core.TypedLocalObjectReference{
+				Name:     issuer.Name,
+				Kind:     "Issuer",
+				APIGroup: types.StringP(cm_api.SchemeGroupVersion.Group), //cert-manger.io
+			},
+			Certificate: &api.CertificateSpec{
+				Organization: []string{
+					"kubedb:server",
+				},
+				DNSNames: []string{
+					"localhost",
+				},
+				IPAddresses: []string{
+					"127.0.0.1",
+				},
+			},
+		}
+	}
 	return redis
 }
 

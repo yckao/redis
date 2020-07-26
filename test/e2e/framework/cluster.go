@@ -16,24 +16,25 @@ limitations under the License.
 package framework
 
 import (
-	"context"
-	"fmt"
-	"net"
-	"strconv"
-	"strings"
-	"time"
+"context"
+"crypto/tls"
+"fmt"
+"net"
+"strconv"
+"strings"
+"time"
 
-	api "kubedb.dev/apimachinery/apis/kubedb/v1alpha1"
-	"kubedb.dev/redis/test/e2e/util"
+api "kubedb.dev/apimachinery/apis/kubedb/v1alpha1"
+"kubedb.dev/redis/test/e2e/util"
 
-	"github.com/appscode/go/sets"
-	rd "github.com/go-redis/redis"
-	. "github.com/onsi/gomega"
-	"github.com/pkg/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
-	core_util "kmodules.xyz/client-go/core/v1"
-	"kmodules.xyz/client-go/tools/portforward"
+"github.com/appscode/go/sets"
+rd "github.com/go-redis/redis"
+. "github.com/onsi/gomega"
+"github.com/pkg/errors"
+metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+"k8s.io/apimachinery/pkg/util/wait"
+core_util "kmodules.xyz/client-go/core/v1"
+"kmodules.xyz/client-go/tools/portforward"
 )
 
 func (f *Framework) RedisClusterOptions() *rd.ClusterOptions {
@@ -105,7 +106,20 @@ func (s *ClusterScenario) ClusterNodes(slotStart, slotEnd int) []rd.ClusterNode 
 
 func (s *ClusterScenario) ClusterClient(opt *rd.ClusterOptions) *rd.ClusterClient {
 	var errBadState = fmt.Errorf("cluster state is not consistent")
+
+
 	opt.Addrs = s.Addrs()
+
+
+	//curOpt := &rd.ClusterOptions{
+	//	Addrs: s.Addrs(),
+	//	ReadTimeout: opt.ReadTimeout,
+	//	WriteTimeout: opt.WriteTimeout,
+	//
+	//	//TLSConfig: opt.TLSConfig,
+	//	//MinIdleConns: 5000,
+	//}
+
 	client := rd.NewClusterClient(opt)
 
 	Eventually(func() error {
@@ -114,8 +128,10 @@ func (s *ClusterScenario) ClusterClient(opt *rd.ClusterOptions) *rd.ClusterClien
 			return nil
 		}
 
+
 		err := client.ForEachMaster(func(master *rd.Client) error {
 			_, errp := master.Ping().Result()
+			fmt.Println("............ err ",errp.Error())
 			if errp != nil {
 				return fmt.Errorf("%v: master(%s) ping error <-> %v", errBadState, master.String(), errp)
 			}
@@ -154,7 +170,7 @@ func (f *Framework) GetPodsIPWithTunnel(redis *api.Redis) ([][]string, [][]*port
 	return util.FowardedPodsIPWithTunnel(f.kubeClient, f.restConfig, redis)
 }
 
-func Sync(addrs [][]string, redis *api.Redis) ([][]RedisNode, [][]*rd.Client) {
+func (f *Framework) Sync(addrs [][]string, redis *api.Redis) ([][]RedisNode, [][]*rd.Client) {
 	var (
 		nodes     = make([][]RedisNode, int(*redis.Spec.Cluster.Master))
 		rdClients = make([][]*rd.Client, int(*redis.Spec.Cluster.Master))
@@ -164,15 +180,29 @@ func Sync(addrs [][]string, redis *api.Redis) ([][]RedisNode, [][]*rd.Client) {
 		slotRange  []string
 		err        error
 	)
+	opt := &rd.Options{
+		ReadTimeout:  time.Minute,
+		WriteTimeout: time.Minute,
+	}
+	if WithTLSConfig == true {
+		certPool, clientCert, err := f.GetTLSCerts(redis.ObjectMeta)
+		Expect(err).NotTo(HaveOccurred())
+
+		opt.TLSConfig = &tls.Config{
+			InsecureSkipVerify: true,
+			RootCAs:            certPool,
+			Certificates:       clientCert,
+		}
+	}
 
 	for i := 0; i < int(*redis.Spec.Cluster.Master); i++ {
 		nodes[i] = make([]RedisNode, int(*redis.Spec.Cluster.Replicas)+1)
 		rdClients[i] = make([]*rd.Client, int(*redis.Spec.Cluster.Replicas)+1)
 
 		for j := 0; j <= int(*redis.Spec.Cluster.Replicas); j++ {
-			rdClients[i][j] = rd.NewClient(&rd.Options{
-				Addr: fmt.Sprintf(":%s", addrs[i][j]),
-			})
+			opt.Addr = fmt.Sprintf(":%s", addrs[i][j])
+
+			rdClients[i][j] = rd.NewClient(opt)
 
 			nodesConf, err = rdClients[i][j].ClusterNodes().Result()
 			Expect(err).NotTo(HaveOccurred())
@@ -228,10 +258,24 @@ func Sync(addrs [][]string, redis *api.Redis) ([][]RedisNode, [][]*rd.Client) {
 }
 
 func (f *Framework) WaitUntilRedisClusterConfigured(redis *api.Redis, port string) error {
+	opt := &rd.Options{
+		Addr:         fmt.Sprintf(":%s", port),
+		ReadTimeout:  time.Minute,
+		WriteTimeout: 2 * time.Minute,
+	}
+
+	if WithTLSConfig == true {
+		certPool, clientCert, err := f.GetTLSCerts(redis.ObjectMeta)
+		Expect(err).NotTo(HaveOccurred())
+
+		opt.TLSConfig = &tls.Config{
+			InsecureSkipVerify: true,
+			RootCAs:            certPool,
+			Certificates:       clientCert,
+		}
+	}
 	return wait.PollImmediate(time.Second*5, time.Minute*5, func() (bool, error) {
-		rdClient := rd.NewClient(&rd.Options{
-			Addr: fmt.Sprintf(":%s", port),
-		})
+		rdClient := rd.NewClient(opt)
 
 		slots, err := rdClient.ClusterSlots().Result()
 		if err != nil {

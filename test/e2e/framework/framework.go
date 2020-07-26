@@ -16,12 +16,19 @@ limitations under the License.
 package framework
 
 import (
+	cm "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
+	. "github.com/onsi/gomega"
+	"github.com/spf13/afero"
+	"k8s.io/client-go/dynamic"
 	api "kubedb.dev/apimachinery/apis/kubedb/v1alpha1"
 	cs "kubedb.dev/apimachinery/client/clientset/versioned"
+	"path/filepath"
 
 	"github.com/appscode/go/crypto/rand"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	"gomodules.xyz/cert/certstore"
 	ka "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	"kmodules.xyz/client-go/tools/portforward"
 	appcat_cs "kmodules.xyz/custom-resources/client/clientset/versioned/typed/appcatalog/v1alpha1"
@@ -29,20 +36,25 @@ import (
 
 var (
 	DockerRegistry = "kubedbci"
-	DBCatalogName  = "4.0-v2"
+	DBCatalogName  = "5.0.3-v1"
+	//DBCatalogName  = "6.0.5"
 	Cluster        = true
+	WithTLSConfig  = false
 )
 
 type Framework struct {
-	restConfig       *rest.Config
-	kubeClient       kubernetes.Interface
-	dbClient         cs.Interface
-	kaClient         ka.Interface
-	appCatalogClient appcat_cs.AppcatalogV1alpha1Interface
-	tunnel           *portforward.Tunnel
-	namespace        string
-	name             string
-	StorageClass     string
+	restConfig        *rest.Config
+	kubeClient        kubernetes.Interface
+	dbClient          cs.Interface
+	kaClient          ka.Interface
+	dmClient          dynamic.Interface
+	appCatalogClient  appcat_cs.AppcatalogV1alpha1Interface
+	tunnel            *portforward.Tunnel
+	namespace         string
+	name              string
+	StorageClass      string
+	CertStore         *certstore.CertStore
+	certManagerClient cm.Interface
 }
 
 func New(
@@ -50,18 +62,28 @@ func New(
 	kubeClient kubernetes.Interface,
 	extClient cs.Interface,
 	kaClient ka.Interface,
+	dmClient dynamic.Interface,
 	appCatalogClient appcat_cs.AppcatalogV1alpha1Interface,
+	certManagerClient cm.Interface,
 	storageClass string,
 ) *Framework {
+	store, err := certstore.NewCertStore(afero.NewMemMapFs(), filepath.Join("", "pki"))
+	Expect(err).NotTo(HaveOccurred())
+
+	err = store.InitCA()
+	Expect(err).NotTo(HaveOccurred())
 	return &Framework{
-		restConfig:       restConfig,
-		kubeClient:       kubeClient,
-		dbClient:         extClient,
-		kaClient:         kaClient,
-		appCatalogClient: appCatalogClient,
-		name:             "redis-operator",
-		namespace:        rand.WithUniqSuffix(api.ResourceSingularRedis),
-		StorageClass:     storageClass,
+		restConfig:        restConfig,
+		kubeClient:        kubeClient,
+		dbClient:          extClient,
+		kaClient:          kaClient,
+		dmClient:          dmClient,
+		appCatalogClient:  appCatalogClient,
+		certManagerClient: certManagerClient,
+		name:              "redis-operator",
+		namespace:         rand.WithUniqSuffix(api.ResourceSingularRedis),
+		StorageClass:      storageClass,
+		CertStore:         store,
 	}
 }
 
@@ -82,5 +104,6 @@ func (fi *Invocation) RestConfig() *rest.Config {
 
 type Invocation struct {
 	*Framework
-	app string
+	app           string
+	testResources []interface{}
 }

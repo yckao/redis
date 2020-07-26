@@ -17,6 +17,8 @@ package e2e_test
 
 import (
 	"flag"
+	cm "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
+	"k8s.io/client-go/dynamic"
 	"os"
 	"path/filepath"
 	"testing"
@@ -107,11 +109,13 @@ var _ = BeforeSuite(func() {
 	extClient := cs.NewForConfigOrDie(config)
 	kaClient := ka.NewForConfigOrDie(config)
 	appCatalogClient, err := appcat_cs.NewForConfig(config)
+	dmClient := dynamic.NewForConfigOrDie(config)
+	cerManagerClient := cm.NewForConfigOrDie(config)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	// Framework
-	root = framework.New(config, kubeClient, extClient, kaClient, appCatalogClient, storageClass)
+	root = framework.New(config, kubeClient, extClient, kaClient, dmClient, appCatalogClient, cerManagerClient, storageClass)
 
 	// Create namespace
 	By("Using namespace " + root.Namespace())
@@ -119,13 +123,13 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	root.EventuallyCRD().Should(Succeed())
-
 	if framework.Cluster {
 		cl = clusterVar{}
 		cl.f = root.Invoke()
 		cl.redis = cl.f.RedisCluster()
 		createAndWaitForRunning()
 	}
+
 })
 
 var _ = AfterSuite(func() {
@@ -135,6 +139,9 @@ var _ = AfterSuite(func() {
 
 	By("Delete left over Redis objects")
 	root.CleanRedis()
+	//err := root.Invoke().CleanupTestResources()
+	//Expect(err).NotTo(HaveOccurred())
+
 	By("Delete Namespace")
 	err := root.DeleteNamespace()
 	Expect(err).NotTo(HaveOccurred())

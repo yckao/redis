@@ -50,6 +50,9 @@ var _ = Describe("Redis", func() {
 	BeforeEach(func() {
 		f = root.Invoke()
 		redis = f.Redis()
+		if framework.WithTLSConfig == true {
+			redis = f.RedisWithTLS(redis)
+		}
 		skipMessage = ""
 		key = rand.WithUniqSuffix("kubed-e2e")
 		value = rand.GenerateTokenWithLength(10)
@@ -118,6 +121,9 @@ var _ = Describe("Redis", func() {
 	}
 
 	AfterEach(func() {
+
+		err = cl.f.CleanupTestResources()
+		Expect(err).NotTo(HaveOccurred())
 		deleteTestResource()
 	})
 
@@ -128,6 +134,13 @@ var _ = Describe("Redis", func() {
 
 		// Create Redis
 		createAndWaitForRunning()
+
+		By("ping database")
+		client, err := f.GetRedisClient(redis.ObjectMeta)
+		Expect(err).NotTo(HaveOccurred())
+		res, err := client.Ping().Result()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res).To(Equal("PONG"))
 
 		By("Inserting item into database")
 		f.EventuallySetItem(redis.ObjectMeta, key, value).Should(BeTrue())

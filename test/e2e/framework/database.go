@@ -17,16 +17,49 @@ package framework
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"github.com/go-redis/redis"
+	"kmodules.xyz/client-go/tools/portforward"
+	api "kubedb.dev/apimachinery/apis/kubedb/v1alpha1"
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis"
 	. "github.com/onsi/gomega"
 	core "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"kmodules.xyz/client-go/tools/portforward"
 )
+
+//================================= TLS FOR REDIS====================================
+func (f *Framework) GetTLSCerts(meta metav1.ObjectMeta) (*x509.CertPool, []tls.Certificate, error) {
+	// get server-secret
+	serverSecret, err := f.kubeClient.CoreV1().Secrets(f.Namespace()).Get(context.TODO(), fmt.Sprintf("%s-%s", meta.Name, api.RedisServerSecretSuffix), metav1.GetOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	cacrt := serverSecret.Data["ca.crt"]
+	certPool := x509.NewCertPool()
+	if ok := certPool.AppendCertsFromPEM(cacrt); !ok {
+		return nil, nil, fmt.Errorf("no certs appended, using system certs only")
+	}
+
+	// get client-secret
+	clientSecret, err := f.kubeClient.CoreV1().Secrets(f.Namespace()).Get(context.TODO(), fmt.Sprintf("%s-%s", meta.Name, api.RedisExternalClientSecretSuffix), metav1.GetOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	clientCrt := clientSecret.Data[tlsCertFileName]
+	clientKey := clientSecret.Data[tlsKeyFileName]
+	cert, err := tls.X509KeyPair(clientCrt, clientKey)
+	//cert, err := tls.LoadX509KeyPair("fullchain.pem", "privkey.pem")
+	if err != nil {
+		return nil, nil, err
+	}
+	var clientCert []tls.Certificate
+	clientCert = append(clientCert, cert)
+	return certPool, clientCert, nil
+}
 
 func (f *Framework) GetDatabasePod(meta metav1.ObjectMeta) (*core.Pod, error) {
 	return f.kubeClient.CoreV1().Pods(meta.Namespace).Get(context.TODO(), meta.Name+"-0", metav1.GetOptions{})
@@ -50,11 +83,25 @@ func (f *Framework) GetRedisClient(meta metav1.ObjectMeta) (*redis.Client, error
 		return nil, err
 	}
 
-	return redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("localhost:%v", f.tunnel.Local),
-		Password: "", // no password set
-		DB:       0,  // use default DB
-	}), nil
+	opt := &redis.Options{
+		Addr:         fmt.Sprintf("localhost:%v", f.tunnel.Local),
+		Password:     "", // no password set
+		DB:           0,  // use default DB
+		ReadTimeout:  time.Minute,
+		WriteTimeout: 2 * time.Minute,
+	}
+
+	if WithTLSConfig == true {
+		certPool, clientCert, err := f.GetTLSCerts(meta)
+		Expect(err).NotTo(HaveOccurred())
+
+		opt.TLSConfig = &tls.Config{
+			InsecureSkipVerify: true,
+			RootCAs:            certPool,
+			Certificates:       clientCert,
+		}
+	}
+	return redis.NewClient(opt), nil
 }
 
 func (f *Framework) EventuallyRedisConfig(meta metav1.ObjectMeta, config string) GomegaAsyncAssertion {
